@@ -7,7 +7,7 @@ module Responses
     respond 11, prompt
   end
 
-  def success mime_type, body
+  def success body, mime_type=nil
     respond 20, mime_type, body
   end
 

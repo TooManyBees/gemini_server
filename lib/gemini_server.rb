@@ -10,7 +10,9 @@ require_relative "gemini_server/responses"
 class GeminiServer
   def initialize options = {}
     @routes = []
-    @public_folder = options[:public_folder]
+    @public_folder = File.exapnd_path(options[:public_folder]) rescue nil
+    @charset = options[:charset]
+    @lang = options[:lang]
     @ssl_cert, @ssl_key = self.load_cert_and_key(options)
   end
 
@@ -29,37 +31,47 @@ class GeminiServer
         uri = begin
           Addressable::URI.parse(data)
         rescue Addressable::URI::InvalidURIError
-          request = Request.new(client, params, uri)
-          request.bad_request "Invalid URI"
-          client.close_write
+          ctx = ResponseContext.new(params, uri)
+          ctx.bad_request "Invalid URI"
+          send_response(client, ctx.response)
           next
         end
         uri.scheme = "gemini" if uri.scheme.nil?
         params, handler = self.find_route(uri.path)
-        request = Request.new(client, params, uri)
         if params
-          request.fulfill(&handler)
+          ctx = ResponseContext.new(params, uri, mime_type: @mime_type, charset: @charset, lang: @lang)
+          begin
+            ctx.instance_exec(&handler)
+          rescue StandardError => e
+            ctx.temporary_failure
+          ensure
+            send_response(client, ctx.response)
+          end
         else
-          request.not_found
+          static_response = serve_static(uri.path)
+          send_response(client, static_response) and next if static_response
+          ctx = ResponseContext.new(params, uri)
+          ctx.not_found
+          send_response(client, ctx.response)
         end
       end
     end
   end
 
-  def static_file_exists? path
-
-  end
-
-  def serve_static path
-    path = File.expand_path "#{@public_path}#{path}"
-    if File.exist?(path)
-
-    end
-  end
-
   private
 
-  def find_route(path)
+  def serve_static path
+    return if @public_folder.nil?
+    path = File.expand_path "#{@public_folder}#{path}"
+    return unless path.start_with?(@public_folder)
+    File.open(path) do |f|
+      mime_type = MIME::Types.type_for(File.basename(path)).first || "application/octet-stream"
+      { code: 200, meta: mime_type, body: f.read }
+    end
+  rescue Errno::ENOENT
+  end
+
+  def find_route path
     @routes.each do |(route, handler)|
       params = route.params(path)
       return [params, handler] if params
@@ -67,17 +79,33 @@ class GeminiServer
     nil
   end
 
+  def send_response client, response
+    if (20...30).include?(response[:code])
+      mime_type = MIME::Types[response[:mime_type] || response[:meta]].first || GEMINI_MIME_TYPE
+      client.write "#{response[:code]} #{mime_type}"
+      if mime_type.media_type == "text"
+        client.write "; charset=#{response[:charset]}" if response[:charset]
+        client.write "; lang=#{response[:lang]}" if response[:lang]
+      end
+      client.write "\r\n"
+      client.write response[:body]
+    else
+      client.write "#{response[:code]} #{response[:meta]}\r\n"
+    end
+    client.close
+  end
+
   def load_cert_and_key options
     found_cert = options[:cert] || if options[:cert_path]
-      File.open(options[:cert_path])
+      File.open(options[:cert_path]) rescue nil
     elsif ENV["GEMINI_CERT_PATH"]
-      File.open(ENV["GEMINI_CERT_PATH"])
+      File.open(ENV["GEMINI_CERT_PATH"]) rescue nil
     end
 
     found_key = options[:key] || if options[:key_path]
-      File.open(options[:key_path])
+      File.open(options[:key_path]) rescue nil
     elsif ENV["GEMINI_KEY_PATH"]
-      File.open(ENV["GEMINI_KEY_PATH"])
+      File.open(ENV["GEMINI_KEY_PATH"]) rescue nil
     end
 
     raise "SSL certificate not found" unless found_cert
@@ -85,7 +113,7 @@ class GeminiServer
 
     [
       found_cert.is_a?(OpenSSL::X509::Certificate) ? found_cert : OpenSSL::X509::Certificate.new(found_cert),
-      found_key.is_a?(OpenSSL::PKey::RSA) ? found_key : OpenSSL::PKey::RSA.new(found_key),
+      found_key.is_a?(OpenSSL::PKey) ? found_key : OpenSSL::PKey.read(found_key),
     ]
   end
 
@@ -100,43 +128,37 @@ class GeminiServer
   end
 end
 
-class Request
+class ResponseContext
   include Responses
 
-  attr_reader :params, :uri
-
-  def initialize client, params, uri
-    @client = client
-    @params = params
-    @mime_type = GEMINI_MIME_TYPE
-    @charset = "utf-8"
-    @uri = uri
+  def initialize params, uri, options={}
+    @__params = params
+    @__uri = uri
+    @__mime_type = options[:mime_type]
+    @__charset = options[:charset]
+    @__lang = options[:lang]
   end
 
-  def mime_type t
+  def mime_type t=nil
+    return @__mime_type if t.nil?
     type = MIME::Types[t].first
     if type
-      @mime_type = type
+      @__mime_type = type
     else
       STDERR.puts("WARN: Unknown MIME type #{t.inspect}")
     end
   end
 
-  # TODO: move this code so it can't be re-invoked in a handler
-  def fulfill &blk
-    begin
-      self.instance_exec(@params, @uri, &blk)
-    rescue StandardError => e
-      temporary_failure
-    ensure
-      @client.close
-    end
+  def params; @__params; end
+  def uri; @__uri; end
+  def charset c; @__charset = c; end
+  def lang l; @__lang = l; end
+
+  def respond code, meta, body=nil
+    @__response = { code: code, meta: meta, body: body }
   end
 
-  def respond code, meta, body = nil
-    @client.write "#{code} #{meta}\r\n"
-    if (20...30).include?(code)
-      @client.write body
-    end
+  def response
+    @__response.to_h.merge({ mime_type: @__mime_type, lang: @__lang, charset: @__charset })
   end
 end
