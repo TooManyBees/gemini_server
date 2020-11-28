@@ -30,6 +30,7 @@ class GeminiServer
         remote_ip = client.connect.io.remote_address.ip_address
         data = Async::IO::Stream.new(client.connect).read_until("\r\n")
         status, size = nil
+        start_time = clock_time
         uri = begin
           Addressable::URI.parse(data)
         rescue Addressable::URI::InvalidURIError
@@ -57,7 +58,7 @@ class GeminiServer
           ctx.not_found
           status, size = send_response(client, ctx.response)
         end
-        puts log(ip: remote_ip, uri: uri, status: status, body_size: size)
+        puts log(ip: remote_ip, uri: uri, start_time: start_time, status: status, body_size: size)
       end
     end
   end
@@ -90,7 +91,7 @@ class GeminiServer
       client.write "#{response[:code]} #{mime_type}"
       if mime_type.media_type == "text"
         client.write "; charset=#{response[:charset]}" if response[:charset]
-        client.write "; lang=#{response[:lang]}" if response[:lang]
+        client.write "; lang=#{response[:lang]}" if response[:lang] && mime_type.sub_type == "gemini"
       end
       client.write "\r\n"
       body_size = client.write response[:body]
@@ -101,12 +102,14 @@ class GeminiServer
     [response[:code], body_size]
   end
 
-  def log ip:, uri:, username:nil, status:nil, body_size:nil
+  LOG_FORMAT = "%s - %s [%s] \"%s\" %s %s %0.4f"
+
+  def log ip:, uri:, start_time:, username:nil, status:nil, body_size:nil
     # Imitates Apache common log format to the extent that it applies to Gemini
     # http://httpd.apache.org/docs/1.3/logs.html#common
     path = uri.omit(:scheme, :host).to_s
     path = path.length > 0 ? path : "/"
-    "#{ip} - #{username || '-'} [#{Time.now.strftime("%d/%b/%Y:%H:%M:%S %z")}] \"#{path}\" #{status || '-'} #{body_size || '-'}"
+    LOG_FORMAT % [ip, username || '-', Time.now.strftime("%d/%b/%Y:%H:%M:%S %z"), path, status.to_s || '-', body_size.to_s || '-', clock_time - start_time]
   end
 
   def load_cert_and_key options
@@ -138,6 +141,16 @@ class GeminiServer
       context.min_version = OpenSSL::SSL::TLS1_2_VERSION
       context.max_version = OpenSSL::SSL::TLS1_3_VERSION
       context.setup
+    end
+  end
+
+  if defined?(Process::CLOCK_MONOTONIC)
+    def clock_time
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    end
+  else
+    def clock_time
+      Time.now.to_f
     end
   end
 end
