@@ -27,13 +27,16 @@ class GeminiServer
 
     Async do |task|
       endpoint.accept do |client|
+        remote_ip = client.connect.io.remote_address.ip_address
         data = Async::IO::Stream.new(client.connect).read_until("\r\n")
+        status, size = nil
         uri = begin
           Addressable::URI.parse(data)
         rescue Addressable::URI::InvalidURIError
           ctx = ResponseContext.new(params, uri)
           ctx.bad_request "Invalid URI"
-          send_response(client, ctx.response)
+          status, size = send_response(client, ctx.response)
+          puts log(ip: remote_ip, uri: uri, status: status, body_size: size)
           next
         end
         uri.scheme = "gemini" if uri.scheme.nil?
@@ -45,15 +48,16 @@ class GeminiServer
           rescue StandardError => e
             ctx.temporary_failure
           ensure
-            send_response(client, ctx.response)
+            status, size = send_response(client, ctx.response)
           end
+        elsif static_response = serve_static(uri.path)
+          status, size = send_response(client, static_response)
         else
-          static_response = serve_static(uri.path)
-          send_response(client, static_response) and next if static_response
           ctx = ResponseContext.new(params, uri)
           ctx.not_found
-          send_response(client, ctx.response)
+          status, size = send_response(client, ctx.response)
         end
+        puts log(ip: remote_ip, uri: uri, status: status, body_size: size)
       end
     end
   end
@@ -80,6 +84,7 @@ class GeminiServer
   end
 
   def send_response client, response
+    body_size = nil
     if (20...30).include?(response[:code])
       mime_type = MIME::Types[response[:mime_type] || response[:meta]].first || GEMINI_MIME_TYPE
       client.write "#{response[:code]} #{mime_type}"
@@ -88,11 +93,20 @@ class GeminiServer
         client.write "; lang=#{response[:lang]}" if response[:lang]
       end
       client.write "\r\n"
-      client.write response[:body]
+      body_size = client.write response[:body]
     else
       client.write "#{response[:code]} #{response[:meta]}\r\n"
     end
     client.close
+    [response[:code], body_size]
+  end
+
+  def log ip:, uri:, username:nil, status:nil, body_size:nil
+    # Imitates Apache common log format to the extent that it applies to Gemini
+    # http://httpd.apache.org/docs/1.3/logs.html#common
+    path = uri.omit(:scheme, :host).to_s
+    path = path.length > 0 ? path : "/"
+    "#{ip} - #{username || '-'} [#{Time.now.strftime("%d/%b/%Y:%H:%M:%S %z")}] \"#{path}\" #{status || '-'} #{body_size || '-'}"
   end
 
   def load_cert_and_key options
