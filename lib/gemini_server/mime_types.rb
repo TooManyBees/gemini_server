@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "mime/types"
 
 GEMINI_MIME_TYPE = MIME::Type.new({

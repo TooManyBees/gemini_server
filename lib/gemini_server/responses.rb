@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Responses
   def input prompt
     respond 10, prompt
