@@ -13,7 +13,7 @@ require_relative "gemini_server/responses"
 class GeminiServer
   def initialize options = {}
     @routes = []
-    @public_folder = File.exapnd_path(options[:public_folder]) rescue nil
+    @public_folder = File.expand_path(options[:public_folder]) rescue nil
     @views_folder = File.expand_path(options[:views_folder] || ".")
     @charset = options[:charset]
     @lang = options[:lang]
@@ -76,8 +76,8 @@ class GeminiServer
     path = File.expand_path "#{@public_folder}#{path}"
     return unless path.start_with?(@public_folder)
     File.open(path) do |f|
-      mime_type = MIME::Types.type_for(File.basename(path)).first || "application/octet-stream"
-      { code: 200, meta: mime_type, body: f.read }
+      mime_type = MIME::Types.type_for(File.basename(path)).first || "text/plain"
+      { code: 20, meta: mime_type, body: f.read }
     end
   rescue Errno::ENOENT
   end
@@ -110,12 +110,12 @@ class GeminiServer
 
   LOG_FORMAT = "%s - %s [%s] \"%s\" %s %s %0.4f"
 
-  def log ip:, uri:, start_time:, username:nil, status:nil, body_size:nil
+  def log ip:, uri:, start_time:, username:nil, status:, body_size:nil
     # Imitates Apache common log format to the extent that it applies to Gemini
     # http://httpd.apache.org/docs/1.3/logs.html#common
     path = uri.omit(:scheme, :host).to_s
     path = path.length > 0 ? path : "/"
-    LOG_FORMAT % [ip, username || '-', Time.now.strftime("%d/%b/%Y:%H:%M:%S %z"), path, status.to_s || '-', body_size.to_s || '-', clock_time - start_time]
+    LOG_FORMAT % [ip, username || '-', Time.now.strftime("%d/%b/%Y:%H:%M:%S %z"), path, status.to_s, body_size.to_s || '-', clock_time - start_time]
   end
 
   def load_cert_and_key options
