@@ -3,6 +3,7 @@
 require "addressable/uri"
 require "async/io"
 require "async/io/stream"
+require "erb"
 require "mime/types"
 require "mustermann"
 require "openssl"
@@ -13,6 +14,7 @@ class GeminiServer
   def initialize options = {}
     @routes = []
     @public_folder = File.exapnd_path(options[:public_folder]) rescue nil
+    @views_folder = File.expand_path(options[:views_folder] || ".")
     @charset = options[:charset]
     @lang = options[:lang]
     @ssl_cert, @ssl_key = self.load_cert_and_key(options)
@@ -31,7 +33,7 @@ class GeminiServer
       endpoint.accept do |client|
         remote_ip = client.connect.io.remote_address.ip_address
         data = Async::IO::Stream.new(client.connect).read_until("\r\n")
-        status, size = nil
+        status, size, captured_error = nil
         start_time = clock_time
         uri = begin
           Addressable::URI.parse(data)
@@ -45,11 +47,12 @@ class GeminiServer
         uri.scheme = "gemini" if uri.scheme.nil?
         params, handler = self.find_route(uri.path)
         if params
-          ctx = ResponseContext.new(params, uri, mime_type: @mime_type, charset: @charset, lang: @lang)
+          ctx = ResponseContext.new(params, uri, views_folder: @views_folder, mime_type: @mime_type, charset: @charset, lang: @lang)
           begin
             ctx.instance_exec(&handler)
           rescue StandardError => e
             ctx.temporary_failure
+            captured_error = e
           ensure
             status, size = send_response(client, ctx.response)
           end
@@ -61,6 +64,7 @@ class GeminiServer
           status, size = send_response(client, ctx.response)
         end
         puts log(ip: remote_ip, uri: uri, start_time: start_time, status: status, body_size: size)
+        raise captured_error if captured_error.is_a?(Exception)
       end
     end
   end
@@ -166,6 +170,8 @@ class ResponseContext
     @__mime_type = options[:mime_type]
     @__charset = options[:charset]
     @__lang = options[:lang]
+    @__views_folder = options[:views_folder]
+    temporary_failure
   end
 
   def mime_type t=nil
@@ -182,6 +188,17 @@ class ResponseContext
   def uri; @__uri; end
   def charset c; @__charset = c; end
   def lang l; @__lang = l; end
+
+  def erb template, locals: {}
+    b = TOPLEVEL_BINDING.dup
+    b.local_variable_set(:params, params)
+    locals.each { |key, val| b.local_variable_set(key, val) }
+    template = File.basename(template.to_s, ".erb")
+    mime_type = MIME::Types.type_for(template).first || GEMINI_MIME_TYPE
+    t = ERB.new(File.read(File.join(@__views_folder, "#{template}.erb")))
+    body = t.result(b)
+    success(body, mime_type)
+  end
 
   def respond code, meta, body=nil
     @__response = { code: code, meta: meta, body: body }
