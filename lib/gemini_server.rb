@@ -174,8 +174,7 @@ class ResponseContext
     temporary_failure
   end
 
-  def mime_type t=nil
-    return @__mime_type if t.nil?
+  def mime_type t
     type = MIME::Types[t].first
     if type
       @__mime_type = type
