@@ -80,6 +80,8 @@ class GeminiServer
       { code: 20, meta: mime_type, body: f.read }
     end
   rescue Errno::ENOENT
+  rescue Errno::EISDIR
+    # TODO: index.gmi?
   end
 
   def find_route path
