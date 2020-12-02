@@ -1,10 +1,7 @@
 source "https://rubygems.org"
 
-gem "addressable", "~> 2.7"
-gem "async-io", "~> 1.30"
-gem "mime-types", "~> 3.3"
-gem "mustermann", "~> 1.1"
+# Specify your gem's dependencies in gemini_server.gemspec
+gemspec
 
-group :development do
-  gem "juwelier", "~> 2.4.9"
-end
+gem "rake", "~> 12.0"
+gem "minitest", "~> 5.0"
