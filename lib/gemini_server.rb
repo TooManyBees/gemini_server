@@ -51,10 +51,9 @@ class GeminiServer
     while buf.length <= MAX_URL_SIZE + 2 do
       buf << io.read_partial
       line_end = buf.index("\r\n", offset)
-      return buf[0...line_end] if line_end && line_end < MAX_URL_SIZE
       offset = buf.length
+      return buf[0...line_end] if line_end && line_end <= MAX_URL_SIZE
     end
-    nil
   end
 
   def handle_request io, client
