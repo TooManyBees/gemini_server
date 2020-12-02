@@ -58,7 +58,7 @@ module Responses
   end
 
   def bad_request explanation = "Bad request"
-    respond 54, explanation
+    respond 59, explanation
   end
 
   def client_certificate_required explanation = "Client certificate required"

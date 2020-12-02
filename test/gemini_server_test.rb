@@ -75,7 +75,7 @@ class DefaultServer < MiniTest::Test
 
   def test_drops_long_request_urls
     response = make_request(@server, "localhost/#{"a" * 1024}")
-    assert_equal "54 URI too long\r\n", response
+    assert_equal "59 URI too long\r\n", response
   end
 end
 
