@@ -101,9 +101,9 @@ class GeminiServer
       mime_type = MIME::Types.type_for(File.basename(path)).first || "text/plain"
       { code: 20, meta: mime_type, body: f.read }
     end
-  rescue Errno::ENOENT
-  rescue Errno::EISDIR
-    # TODO: index.gmi?
+  rescue Errno::ENOENT, Errno::ENAMETOOLONG, Errno::EISDIR # TODO: index.gmi?
+  rescue SystemCallError
+    { code: 40, meta: "Temporary failure" }
   end
 
   def find_route path
