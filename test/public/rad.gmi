@@ -1,0 +1,1 @@
+This rad file is hosted statically.

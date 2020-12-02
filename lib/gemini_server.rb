@@ -31,38 +31,10 @@ class GeminiServer
 
     Async do |task|
       endpoint.accept do |client|
-        remote_ip = client.connect.io.remote_address.ip_address
-        data = Async::IO::Stream.new(client.connect).read_until("\r\n")
-        status, size, captured_error = nil
         start_time = clock_time
-        uri = begin
-          Addressable::URI.parse(data)
-        rescue Addressable::URI::InvalidURIError
-          ctx = ResponseContext.new(params, uri)
-          ctx.bad_request "Invalid URI"
-          status, size = send_response(client, ctx.response)
-          puts log(ip: remote_ip, uri: uri, status: status, body_size: size)
-          next
-        end
-        uri.scheme = "gemini" if uri.scheme.nil?
-        params, handler = self.find_route(uri.path)
-        if params
-          ctx = ResponseContext.new(params, uri, views_folder: @views_folder, mime_type: @mime_type, charset: @charset, lang: @lang)
-          begin
-            ctx.instance_exec(&handler)
-          rescue StandardError => e
-            ctx.temporary_failure
-            captured_error = e
-          ensure
-            status, size = send_response(client, ctx.response)
-          end
-        elsif static_response = serve_static(uri.path)
-          status, size = send_response(client, static_response)
-        else
-          ctx = ResponseContext.new(params, uri)
-          ctx.not_found
-          status, size = send_response(client, ctx.response)
-        end
+        remote_ip = client.connect.io.remote_address.ip_address
+        io = Async::IO::Stream.new(client.connect)
+        status, size, uri, captured_error = handle_request(io, client)
         puts log(ip: remote_ip, uri: uri, start_time: start_time, status: status, body_size: size)
         raise captured_error if captured_error.is_a?(Exception)
       end
@@ -70,6 +42,57 @@ class GeminiServer
   end
 
   private
+
+  MAX_URL_SIZE = 1024
+
+  def read_request_url io
+    buf = String.new
+    offset = 0
+    while buf.length <= MAX_URL_SIZE + 2 do
+      buf << io.read_partial
+      line_end = buf.index("\r\n", offset)
+      return buf[0...line_end] if line_end && line_end < MAX_URL_SIZE
+      offset = buf.length
+    end
+    nil
+  end
+
+  def handle_request io, client
+    data = read_request_url(io)
+    if data.nil?
+      ctx = ResponseContext.new({}, nil)
+      ctx.bad_request "URI too long"
+      return send_response(client, ctx.response)
+    end
+    status, size, captured_error = nil
+    uri = begin
+      Addressable::URI.parse(data)
+    rescue Addressable::URI::InvalidURIError
+      ctx = ResponseContext.new({}, nil)
+      ctx.bad_request "Invalid URI"
+      return send_response(client, ctx.response)
+    end
+    uri.scheme = "gemini" if uri.scheme.nil?
+    params, handler = self.find_route(uri.path)
+    if params
+      ctx = ResponseContext.new(params, uri, views_folder: @views_folder, charset: @charset, lang: @lang)
+      begin
+        ctx.instance_exec(&handler)
+      rescue StandardError => e
+        ctx.temporary_failure
+        captured_error = e
+      ensure
+        status, size = send_response(client, ctx.response)
+      end
+    elsif static_response = serve_static(uri.path)
+      status, size = send_response(client, static_response)
+    else
+      ctx = ResponseContext.new(params, uri)
+      ctx.not_found
+      status, size = send_response(client, ctx.response)
+    end
+    [status, size, uri, captured_error]
+  end
 
   def serve_static path
     return if @public_folder.nil?
@@ -115,7 +138,7 @@ class GeminiServer
   def log ip:, uri:, start_time:, username:nil, status:, body_size:nil
     # Imitates Apache common log format to the extent that it applies to Gemini
     # http://httpd.apache.org/docs/1.3/logs.html#common
-    path = uri.omit(:scheme, :host).to_s
+    path = uri ? uri.omit(:scheme, :host).to_s : '<uri too long>'
     path = path.length > 0 ? path : "/"
     LOG_FORMAT % [ip, username || '-', Time.now.strftime("%d/%b/%Y:%H:%M:%S %z"), path, status.to_s, body_size.to_s || '-', clock_time - start_time]
   end
@@ -138,7 +161,7 @@ class GeminiServer
 
     [
       found_cert.is_a?(OpenSSL::X509::Certificate) ? found_cert : OpenSSL::X509::Certificate.new(found_cert),
-      found_key.is_a?(OpenSSL::PKey) ? found_key : OpenSSL::PKey.read(found_key),
+      found_key.is_a?(OpenSSL::PKey::PKey) ? found_key : OpenSSL::PKey.read(found_key),
     ]
   end
 
