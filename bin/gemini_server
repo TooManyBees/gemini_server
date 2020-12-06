@@ -1,0 +1,41 @@
+#!/usr/bin/env ruby
+require "gemini_server"
+require "optparse"
+
+options = {
+  port: 1965,
+  cert_path: ENV["GEMINI_CERT_PATH"],
+  key_path: ENV["GEMINI_KEY_PATH"],
+}
+
+OptionParser.new do |opts|
+  opts.on("-p PORT", "--port PORT", Integer, "Port to listen on") do |port|
+    options[:port] = port
+  end
+
+  opts.on("--cert-path PATH", String, "Path to cert file") do |path|
+    options[:cert_path] = path
+  end
+
+  opts.on("--key-path PATH", String, "Path to key file") do |path|
+    options[:key_path] = path
+  end
+
+  opts.on("--charset CHARSET", String, "Charset of text/* files") do |charset|
+    options[:charset] = charset
+  end
+
+  opts.on("--lang LANG", String, "Language of text/* files") do |lang|
+    options[:lang] = lang
+  end
+end.parse!
+
+server = GeminiServer.new(
+  public_folder: ".",
+  cert_path: options[:cert_path],
+  key_path: options[:key_path],
+  charset: options[:charset],
+  lang: options[:lang],
+)
+
+server.listen("127.0.0.1", options[:port])

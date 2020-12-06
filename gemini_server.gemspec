@@ -21,6 +21,7 @@ Gem::Specification.new do |s|
     `git ls-files -z`.split("\x0").reject { |f| f.match(%r{^(test|spec|features)/}) }
   end
   s.require_paths = ["lib"]
+  s.executables << 'gemini_server'
   s.date = "2020-11-16"
   s.licenses = ["MIT".freeze]
 
