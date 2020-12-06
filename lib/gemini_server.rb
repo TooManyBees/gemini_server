@@ -26,17 +26,26 @@ class GeminiServer
   end
 
   def listen host, port
-    endpoint = Async::IO::Endpoint.tcp(host, port)
-    endpoint = Async::IO::SSLEndpoint.new(endpoint, ssl_context: self.ssl_context(@ssl_cert, @ssl_key))
+    Async do
+      endpoint = Async::IO::Endpoint.tcp(host, port)
+      endpoint = Async::IO::SSLEndpoint.new(endpoint, ssl_context: self.ssl_context(@ssl_cert, @ssl_key))
 
-    Async do |task|
-      endpoint.accept do |client|
-        start_time = clock_time
-        remote_ip = client.connect.io.remote_address.ip_address
-        io = Async::IO::Stream.new(client.connect)
-        status, size, uri, captured_error = handle_request(io, client)
-        puts log(ip: remote_ip, uri: uri, start_time: start_time, status: status, body_size: size)
-        raise captured_error if captured_error.is_a?(Exception)
+      ["INT", "TERM"].each do |signal|
+        old_handler = Signal.trap(signal) do
+          @server.stop if @server
+          old_handler.call if old_handler.respond_to?(:call)
+        end
+      end
+
+      @server = Async do |task|
+        endpoint.accept do |client|
+          start_time = clock_time
+          remote_ip = client.connect.io.remote_address.ip_address
+          io = Async::IO::Stream.new(client.connect)
+          status, size, uri, captured_error = handle_request(io, client)
+          puts log(ip: remote_ip, uri: uri, start_time: start_time, status: status, body_size: size)
+          raise captured_error if captured_error.is_a?(Exception)
+        end
       end
     end
   end
