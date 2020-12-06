@@ -4,6 +4,23 @@ A simple server for the Gemini protocol, with an API inspired by Sinatra.
 
 ## Usage
 
+Use the built-in executable to serve the current directory.
+
+```
+$ gem install gemini_server
+Successfully installed gemini_server-0.1.0
+1 gem installed
+$ gemini_server -h
+Usage: gemini_server [options]
+    -p, --port PORT                  Port to listen on
+        --cert-path PATH             Path to cert file
+        --key-path PATH              Path to key file
+        --charset CHARSET            Charset of text/* files
+        --lang LANG                  Language of text/* files
+```
+
+Or require the library to declare custom routes in Ruby.
+
 ```ruby
 require "gemini_server"
 
