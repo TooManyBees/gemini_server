@@ -17,7 +17,7 @@ class GeminiServer
     @views_folder = File.expand_path(options[:views_folder] || ".")
     @charset = options[:charset]
     @lang = options[:lang]
-    @ssl_cert, @ssl_key = self.load_cert_and_key(options)
+    @ssl_cert, @ssl_key, @ssl_chain = self.load_cert_and_key(options)
   end
 
   def route r, &blk
@@ -28,7 +28,7 @@ class GeminiServer
   def listen host, port
     Async do
       endpoint = Async::IO::Endpoint.tcp(host, port)
-      endpoint = Async::IO::SSLEndpoint.new(endpoint, ssl_context: self.ssl_context(@ssl_cert, @ssl_key))
+      endpoint = Async::IO::SSLEndpoint.new(endpoint, ssl_context: self.ssl_context(@ssl_cert, @ssl_key, @ssl_chain))
 
       ["INT", "TERM"].each do |signal|
         old_handler = Signal.trap(signal) do
@@ -151,6 +151,26 @@ class GeminiServer
     LOG_FORMAT % [ip, username || '-', Time.now.strftime("%d/%b/%Y:%H:%M:%S %z"), path, status.to_s, body_size.to_s || '-', clock_time - start_time]
   end
 
+  def parse_cert_and_chain input_text
+    # Only works in Ruby 3+
+    if OpenSSL::X509::Certificate.respond_to?(:load)
+      certs = OpenSSL::X509::Certificate.load(input_text)
+      return [certs.shift, certs]
+    end
+
+    # Fallback behavior for .pem certificates
+    certificate_pattern = /-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/m
+    certs = input_text.scan(certificate_pattern).collect do |text|
+      OpenSSL::X509::Certificate.new(text)
+    end
+
+    # Fallback behavior if above regex yields 0 certs. E.g. with .der certs
+    # This won't parse any chain certs that might be present
+    certs = [OpenSSL::X509::Certificate.new(input_text)] if certs.empty?
+
+    [certs.shift, certs]
+  end
+
   def load_cert_and_key options
     found_cert = options[:cert] || if options[:cert_path]
       File.open(options[:cert_path]) rescue nil
@@ -167,15 +187,24 @@ class GeminiServer
     raise "SSL certificate not found" unless found_cert
     raise "SSL key not found" unless found_key
 
+    if found_cert.is_a?(OpenSSL::X509::Certificate)
+      main_cert = found_cert
+      chain_list = []
+    else
+      main_cert, chain_list = parse_cert_and_chain found_cert.read
+    end
+
     [
-      found_cert.is_a?(OpenSSL::X509::Certificate) ? found_cert : OpenSSL::X509::Certificate.new(found_cert),
+      main_cert,
       found_key.is_a?(OpenSSL::PKey::PKey) ? found_key : OpenSSL::PKey.read(found_key),
+      chain_list
     ]
   end
 
-  def ssl_context cert, key
+  def ssl_context cert, key, chain
     OpenSSL::SSL::SSLContext.new.tap do |context|
       context.add_certificate(cert, key)
+      context.extra_chain_cert = chain
       context.session_id_context = "gemini_server"
       context.min_version = OpenSSL::SSL::TLS1_2_VERSION
       context.max_version = OpenSSL::SSL::TLS1_3_VERSION
