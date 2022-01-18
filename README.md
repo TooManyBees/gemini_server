@@ -26,7 +26,7 @@ require "gemini_server"
 
 server = GeminiServer.new
 
-server.route("/hithere/:friend") do
+server.route("/greeting/:friend") do
   if params["friend"] == "Gary"
     gone "Gary and I aren't on speaking terms, sorry."
   else
@@ -34,7 +34,7 @@ server.route("/hithere/:friend") do
   end
 end
 
-server.route("/byebye") do
+server.route("/farewell") do
   lang "pig-latin"
   success "arewellfay!"
 end
@@ -152,8 +152,8 @@ Each of these methods are available within a route handler block. Forgetting to 
 * `gone(explanation = "Gone")`
 * `proxy_request_refused(explanation = "Proxy request refused")`
 * `bad_request(explanation = "Bad request")`
-* `client_certificate_required(explanation = "Client certificate )`
-* `certificate_not_authorized(explanation = "Certificate not )`
+* `client_certificate_required(explanation = "Client certificate required")`
+* `certificate_not_authorized(explanation = "Certificate not authorized")`
 * `certificate_not_valid(explanation = "Certificate not valid")`
 
 ### Static file serving
